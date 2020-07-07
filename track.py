@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# #######################################################################################################
+
 # Simple Object Tracking based on detect.py from https://github.com/google-coral/examples-camera/blob/master/gstreamer/detect.py
 #	and unmodified sort.py tracking algorithm from https://github.com/abewley/sort/blob/master/sort.py
 #
@@ -20,14 +22,48 @@
 #
 # ISSUES:
 #  1. camera source runs indefinitely, but video file as a source only does four frames and then stops
+#	looks like some of the video frames have zero objects detected, and the handling routines
+#		need at least one object or it crashes
+#
 #  2. tkinter won't install on enterprise:  sudo apt-get install python3-tk
+#
 #  3. there are fewer trackers than objects so interating by objects causes stuttering on screen
 #     Solutions:
 #        A. could just iterate the trackers instead
 #        B. or use a threshold and not plot one of them
 #        C. or use a flag and if that id has already been printed, dont print it
+#        Solution (A) is implemented in this version, the stuttering is greatly diminished
+#           the remaining stuttering is from phantom objects popping in and out of existence
 #
-#
+
+"""  TEST OUTPUT
+for each tracked object, find the detected object
+     the detected object with the highest area overlap with the tracked object is the best match
+
+nframe= 82 Inference: 15.97 ms FPS: 28 fps
+track id: 34.0   0.09519437214914722 0.38672400632520365 0.6208670347986897 0.7710016776446488
+     0.178  0.402  0.953  0.914 area= 0.031 person    76%   best: person    76% 
+     0.006  0.367  0.335  0.824 area= 0.036 chair     54%   best: chair     54% 
+     0.097  0.625  0.391  0.770 area= 0.042 chair     38%   best: chair     38% 
+     0.285  0.647  0.382  0.749 area= 0.010 chair     30%   best: chair     38% 
+     0.023  0.381  0.316  0.679 area= 0.013 suitcase  30%   best: chair     38% 
+track id: 2.0   0.004931636676922507 0.33736782383215425 0.3690197171243331 0.8217408814783967
+     0.178  0.402  0.953  0.914 area= 0.067 person    76%   best: person    76% 
+     0.006  0.367  0.335  0.824 area= 0.149 chair     54%   best: chair     54% 
+     0.097  0.625  0.391  0.770 area= 0.035 chair     38%   best: chair     54% 
+     0.285  0.647  0.382  0.749 area= 0.005 chair     30%   best: chair     54% 
+     0.023  0.381  0.316  0.679 area= 0.087 suitcase  30%   best: chair     54% 
+track id: 1.0   0.17465821211574795 0.9534570340349949 0.4057792322382703 0.9135853240155101
+     0.178  0.402  0.953  0.914 area= 0.394 person    76%   best: person    76% 
+     0.006  0.367  0.335  0.824 area= 0.067 chair     54%   best: person    76% 
+     0.097  0.625  0.391  0.770 area= 0.031 chair     38%   best: person    76% 
+     0.285  0.647  0.382  0.749 area= 0.010 chair     30%   best: person    76% 
+     0.023  0.381  0.316  0.679 area= 0.039 suitcase  30%   best: person    76% 
+num objs:  5
+nframe= 83 Inference: 16.89 ms FPS: 28 fps
+
+"""
+# #######################################################################################################
 
 """A demo which runs object detection on camera frames using GStreamer.
 
@@ -75,17 +111,7 @@ def shadow_text(dwg, x, y, text, font_size=20):
     dwg.add(dwg.text(text, insert=(x+1, y+1), fill='black', font_size=font_size))
     dwg.add(dwg.text(text, insert=(x, y), fill='white', font_size=font_size))
 
-# ##############################################################################################################
-def generate_svg(src_size, inference_size, inference_box, objs, labels, text_lines,trdata):
-    dwg = svgwrite.Drawing('', size=src_size)
-    src_w, src_h = src_size
-    inf_w, inf_h = inference_size
-    box_x, box_y, box_w, box_h = inference_box
-    scale_x, scale_y = src_w / box_w, src_h / box_h
-#    print('objs: ',objs)
-#    print('track: ',trdata)
-    for y, line in enumerate(text_lines, start=1):
-        shadow_text(dwg, 10, y*20, line)
+""" interate through objects, but there are fewer tracked objects than total objects
     for obj in objs:
         x0, y0, x1, y1 = list(obj.bbox)
 
@@ -115,9 +141,41 @@ def generate_svg(src_size, inference_size, inference_box, objs, labels, text_lin
         x, y, w, h = x * scale_x, y * scale_y, w * scale_x, h * scale_y
         percent = int(100 * obj.score)
         label = 'id:{:3.0f}  {} {}%'.format(tdbest[4], labels.get(obj.id, obj.id),percent)
-
-#        label = 'obj id:{}'.format(percent)
-
+        shadow_text(dwg, x, y - 5, label)
+        dwg.add(dwg.rect(insert=(x,y), size=(w, h),
+                        fill='none', stroke='red', stroke_width='2'))
+"""
+# ##############################################################################################################
+def generate_svg(src_size, inference_size, inference_box, objs, labels, text_lines,trdata):
+    dwg = svgwrite.Drawing('', size=src_size)
+    src_w, src_h = src_size
+    inf_w, inf_h = inference_size
+    box_x, box_y, box_w, box_h = inference_box
+    scale_x, scale_y = src_w / box_w, src_h / box_h
+#    print('objs: ',objs)
+#    print('track: ',trdata)
+    for y, line in enumerate(text_lines, start=1):
+        shadow_text(dwg, 10, y*20, line)
+    obj=objs[0]
+    for td in trdata:
+        x0,y0,x1,y1=td[0].item(),td[1].item(),td[2].item(),td[3].item()
+        print('track id: {}   {} {} {} {}'.format(td[4],x0,x1,y0,y1))
+        overlap=0
+        for ob in objs:
+            dx0,dy0,dx1,dy1=ob.bbox.xmin.item(),ob.bbox.ymin.item(),ob.bbox.xmax.item(),ob.bbox.ymax.item()
+            area=(min(dx1,x1)-max(dx0,x0))*(min(dy1,y1)-max(dy0,y0))
+            if (area>overlap):
+                overlap=area
+                obj=ob
+            print('    {:6.3f} {:6.3f} {:6.3f} {:6.3f} area={:6.3f} {:8s} {:3d}%   best: {:8s} {:3d}% '
+                .format(dx0,dy0,dx1,dy1,area,labels.get(ob.id, ob.id),int(100*ob.score),labels.get(obj.id,obj.id),int(100*obj.score)))
+            
+        x, y, w, h = x0, y0, x1 - x0, y1 - y0      # Relative coordinates.
+        x, y, w, h = int(x * inf_w), int(y * inf_h), int(w * inf_w), int(h * inf_h) # Absolute coordinates, input tensor space.
+        x, y = x - box_x, y - box_y           # Subtract boxing offset.
+        x, y, w, h = x * scale_x, y * scale_y, w * scale_x, h * scale_y          # Scale to source coordinate space.
+        percent = int(100 * obj.score)
+        label = 'id:{:3.0f}  {} {}%'.format(td[4], labels.get(obj.id, obj.id),percent)
         shadow_text(dwg, x, y - 5, label)
         dwg.add(dwg.rect(insert=(x,y), size=(w, h),
                         fill='none', stroke='red', stroke_width='2'))

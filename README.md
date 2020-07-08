@@ -10,3 +10,6 @@ see https://github.com/abewley/sort for algorithm details and link to original p
 # run tracker on camera input
 python3 track.py --model all_models/mobilenet_ssd_v1_coco_quant_postprocess_edgetpu.tflite --labels all_models/coco_labels.txt 
 
+# run tracker on video input
+python3 track.py --videosrc pedestrians.mp4 --model all_models/mobilenet_ssd_v1_coco_quant_postprocess_edgetpu.tflite --labels all_models/coco_labels.txt 
+

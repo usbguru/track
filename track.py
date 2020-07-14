@@ -21,24 +21,6 @@
 #
 #
 
-"""A demo which runs object detection on camera frames using GStreamer.
-
-Run default object detection:
-python3 detect.py
-
-Choose different camera and input encoding
-python3 detect.py --videosrc /dev/video1 --videofmt jpeg
-
-TEST_DATA=../all_models
-Run face detection model:
-python3 detect.py \
-  --model ${TEST_DATA}/mobilenet_ssd_v2_face_quant_postprocess_edgetpu.tflite
-
-Run coco model:
-python3 detect.py \
-  --model ${TEST_DATA}/mobilenet_ssd_v2_coco_quant_postprocess_edgetpu.tflite \
-  --labels ${TEST_DATA}/coco_labels.txt
-"""
 import argparse
 import collections
 import common
@@ -49,15 +31,13 @@ import re
 import svgwrite
 import time
 
-#from tkinter import *	#required by SORT
+#from tkinter import *	
 from sort import *	#tracker algorithm
 
 from filterpy.kalman import KalmanFilter
 
 Object = collections.namedtuple('Object', ['id', 'score', 'bbox'])
 
-
-# ##############################################################################################################
 def load_labels(path):
     p = re.compile(r'\s*(\d+)(.+)')
     with open(path, 'r', encoding='utf-8') as f:
@@ -67,7 +47,7 @@ def load_labels(path):
 def shadow_text(dwg, x, y, text, font_size=20):
     dwg.add(dwg.text(text, insert=(x+1, y+1), fill='black', font_size=font_size))
     dwg.add(dwg.text(text, insert=(x, y), fill='white', font_size=font_size))
-
+"""
 def generate_svg(src_size, inference_size, inference_box, objs, labels, text_lines):
     dwg = svgwrite.Drawing('', size=src_size)
     src_w, src_h = src_size
@@ -78,14 +58,10 @@ def generate_svg(src_size, inference_size, inference_box, objs, labels, text_lin
     for y, line in enumerate(text_lines, start=1):
         shadow_text(dwg, 10, y*20, line)
     for obj in objs:
-        x0, y0, x1, y1 = list(obj.bbox)
-        # Relative coordinates.
-        x, y, w, h = x0, y0, x1 - x0, y1 - y0
-        # Absolute coordinates, input tensor space.
-        x, y, w, h = int(x * inf_w), int(y * inf_h), int(w * inf_w), int(h * inf_h)
-        # Subtract boxing offset.
-        x, y = x - box_x, y - box_y
-        # Scale to source coordinate space.
+        x0, y0, x1, y1 = list(obj.bbox)        # Relative coordinates.
+        x, y, w, h = x0, y0, x1 - x0, y1 - y0        # Absolute coordinates, input tensor space.
+        x, y, w, h = int(x * inf_w), int(y * inf_h), int(w * inf_w), int(h * inf_h)        # Subtract boxing offset.
+        x, y = x - box_x, y - box_y        # Scale to source coordinate space.
         x, y, w, h = x * scale_x, y * scale_y, w * scale_x, h * scale_y
         percent = int(100 * obj.score)
 #        label = '{}% equals {}'.format(percent, labels.get(obj.id, obj.id))
@@ -94,7 +70,44 @@ def generate_svg(src_size, inference_size, inference_box, objs, labels, text_lin
         dwg.add(dwg.rect(insert=(x,y), size=(w, h),
                         fill='none', stroke='red', stroke_width='2'))
     return dwg.tostring()
+"""
 
+# ##############################################################################################################
+def generate_svg(src_size, inference_size, inference_box, objs, labels, text_lines,trdata):
+    dwg = svgwrite.Drawing('', size=src_size)
+    src_w, src_h = src_size
+    inf_w, inf_h = inference_size
+    box_x, box_y, box_w, box_h = inference_box
+    scale_x, scale_y = src_w / box_w, src_h / box_h
+    #    print('objs: ',objs)
+    #    print('track: ',trdata)
+    for y, line in enumerate(text_lines, start=1):
+        shadow_text(dwg, 10, y*20, line)
+    obj=objs[0]
+    for td in trdata:
+        x0,y0,x1,y1=td[0].item(),td[1].item(),td[2].item(),td[3].item()
+        print('track id: {}   {} {} {} {}'.format(td[4],x0,x1,y0,y1))
+        overlap=0
+        for ob in objs:
+            dx0,dy0,dx1,dy1=ob.bbox.xmin.item(),ob.bbox.ymin.item(),ob.bbox.xmax.item(),ob.bbox.ymax.item()
+            area=(min(dx1,x1)-max(dx0,x0))*(min(dy1,y1)-max(dy0,y0))
+            if (area>overlap):
+                overlap=area
+                obj=ob
+            print('    {:6.3f} {:6.3f} {:6.3f} {:6.3f} area={:6.3f} {:8s} {:3d}%   best: {:8s} {:3d}% '
+                .format(dx0,dy0,dx1,dy1,area,labels.get(ob.id, ob.id),
+                int(100*ob.score),labels.get(obj.id,obj.id),int(100*obj.score)))
+        x, y, w, h = x0, y0, x1 - x0, y1 - y0      # Relative coordinates.    
+        x, y, w, h = int(x * inf_w), int(y * inf_h), int(w * inf_w), int(h * inf_h) # Absolute coordinates
+        x, y = x - box_x, y - box_y           # Subtract boxing offset.
+        x, y, w, h = x * scale_x, y * scale_y, w * scale_x, h * scale_y          # Scale to source coordinate space.
+        percent = int(100 * obj.score)
+        label = 'id:{:3.0f}  {} {}%'.format(td[4], labels.get(obj.id, obj.id),percent)
+        shadow_text(dwg, x, y - 5, label)
+        dwg.add(dwg.rect(insert=(x,y), size=(w, h),fill='none', stroke='red', stroke_width='2'))
+    return dwg.tostring()
+# ##############################################################################################################
+       
 class BBox(collections.namedtuple('BBox', ['xmin', 'ymin', 'xmax', 'ymax'])):
     """Bounding box.
     Represents a rectangle which sides are either vertical or horizontal, parallel
@@ -143,11 +156,8 @@ def main():
 
     print('Loading {} with {} labels.'.format(args.model, args.labels))
     interpreter = common.make_interpreter(args.model)
-    print('interpreter is done.')
     interpreter.allocate_tensors()
-    print('tensors are allocated.')
     labels = load_labels(args.labels)
-    print('labels are loaded.')
 
     w, h, _ = common.input_image_size(interpreter)
     inference_size = (w, h)
@@ -164,89 +174,36 @@ def main():
       # For larger input image sizes, use the edgetpu.classification.engine for better performance
       objs = get_output(interpreter, args.threshold, args.top_k)
       end_time=time.monotonic()
-###      print('objs: ',objs)
 
       dets= [] #np.array([])
       print('num objs: ',len(objs))
       for n in range (0,len(objs)):
         element=[] # np.array([])
-#        print('object id ',n)
+##        print('object id ',n)
 #        print(objs[n].bbox.xmin,objs[n].bbox.ymin,objs[n].bbox.xmax,objs[n].bbox.ymax,objs[n].score)
         element.append(objs[n].bbox.xmin)
         element.append(objs[n].bbox.ymin)
         element.append(objs[n].bbox.xmax)
         element.append(objs[n].bbox.ymax)
-        element.append(objs[n].score)
-###        print('element= ',element)
-        #dets=np.append(element)
-        #dets=np.concatenate(dets,element)
-        dets.append(element)
-
-###      print('dets: ',dets)
-      dets=np.array(dets)   #convert to numpy array
-###      print('npdets: ',dets)
+        element.append(objs[n].score)   #    print('element= ',element)
+        dets.append(element)    #      print('dets: ',dets)
+      dets=np.array(dets)       #convert to numpy array #      print('npdets: ',dets)
 
       trdata=tracker.update(dets)
-      track_end=time.monotonic()
-###      print('tracker: ',trdata)
-#     for i in objs:
-#       print(n,' ',i)
-#       n=n+1
-#      end_time = time.monotonic()
-#      print('got end_time')
+      track_end=time.monotonic()    #      print('tracker: ',trdata)
       text_lines = [
           'Inference: {:.2f} ms'.format((end_time - start_time) * 1000),
+          'Track: {:.2f} ms'.format((track_end-end_time)*1000),
           'FPS: {} fps'.format(round(next(fps_counter))),
       ]
-      print('nframe=',nframe,' sort time=',track_end-end_time,' '.join(text_lines))
-#      if (nframe>10):
-#           quit()
+      print('nframe=',nframe,' '.join(text_lines))
       nframe+=1
-      return generate_svg(src_size, inference_size, inference_box, objs, labels, text_lines)
+      return generate_svg(src_size, inference_size, inference_box, objs, labels, text_lines,trdata)
 
-    result = gstreamer.run_pipeline(user_callback,
-                                    src_size=(640, 480),
-                                    appsink_size=inference_size,
-                                    videosrc=args.videosrc,
-                                    videofmt=args.videofmt)
+    result = gstreamer.run_pipeline(user_callback,src_size=(640, 480),appsink_size=inference_size,
+            videosrc=args.videosrc,videofmt=args.videofmt)
 
 if __name__ == '__main__':
     main()
 
-"""
 
-
-objs: 
-[Object(id=0, score=0.70703125, bbox=BBox(xmin=0.008714497089385986, ymin=0.5294671058654785, xmax=0.05631518363952637, ymax=0.6786813735961914)), Object(id=0, score=0.66796875, bbox=BBox(xmin=0.6950980424880981, ymin=0.13782340288162231, xmax=0.7161970138549805, ymax=0.20629242062568665)), Object(id=0, score=0.66796875, bbox=BBox(xmin=0.5020462870597839, ymin=0.7737903594970703, xmax=0.5693402886390686, ymax=0.8641104698181152))]
-
-num objs:  3
-
-element=  [0.008714497089385986, 0.5294671058654785, 0.05631518363952637, 0.6786813735961914, 0.70703125]
-element=  [0.6950980424880981, 0.13782340288162231, 0.7161970138549805, 0.20629242062568665, 0.66796875]
-element=  [0.5020462870597839, 0.7737903594970703, 0.5693402886390686, 0.8641104698181152, 0.66796875]
-
-dets:  
-[[0.008714497089385986, 0.5294671058654785, 0.05631518363952637, 0.6786813735961914, 0.70703125], [0.6950980424880981, 0.13782340288162231, 0.7161970138549805, 0.20629242062568665, 0.66796875], [0.5020462870597839, 0.7737903594970703, 0.5693402886390686, 0.8641104698181152, 0.66796875]]
-
-npdets:  
-[[0.0087145  0.52946711 0.05631518 0.67868137 0.70703125]
- [0.69509804 0.1378234  0.71619701 0.20629242 0.66796875]
- [0.50204629 0.77379036 0.56934029 0.86411047 0.66796875]]
-
-tracker:  
-[[0.69509804 0.1378234  0.71619701 0.20629242 3.        ]
- [0.50204629 0.77379036 0.56934029 0.86411047 2.        ]
- [0.0087145  0.52946711 0.05631518 0.67868137 1.        ]]
-
-nframe= 2 Inference: 28.29 ms FPS: 31 fps
-
-
-
-
-[
-Object(id=0, score=0.7421875,   bbox=BBox(xmin=0.11027121543884277, ymin=0.22172915935516357, xmax=0.9850444793701172, ymax=0.8848692178726196)), 
-Object(id=83, score=0.61328125, bbox=BBox(xmin=0.11694968491792679, ymin=0.4659442901611328, xmax=0.13111881911754608, ymax=0.5445835590362549)), Object(id=83, score=0.5859375,  bbox=BBox(xmin=0.22084935009479523, ymin=0.46825405955314636, xmax=0.2365693300962448, ymax=0.5540032386779785))
-]
-
-
-"""
